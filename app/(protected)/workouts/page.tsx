@@ -111,6 +111,9 @@ export default function WorkoutsPage() {
   const savedWorkouts = workouts.filter(
     (workout) => workout.status === "planned",
   );
+  const cancelledWorkouts = workouts.filter(
+    (workout) => workout.status === "cancelled",
+  );
 
   const completedWorkouts = workouts
     .filter((workout) => workout.status === "completed")
@@ -462,6 +465,33 @@ export default function WorkoutsPage() {
           <div className={cardClass}>
             <p className='text-sm text-zinc-400'>
               Your completed workouts will appear here.
+            </p>
+          </div>
+        )}
+      </section>
+      {/* CANCELLED WORKOUTS */}
+      <section className='mt-10'>
+        <div className='mb-4 flex items-center gap-3'>
+          <AlertCircle
+            size={22}
+            className='text-red-400'
+          />
+
+          <h2 className='text-xl font-semibold'>Cancelled Workouts</h2>
+
+          <span className='rounded-full bg-red-500/10 px-3 py-1 text-xs font-medium text-red-400'>
+            {cancelledWorkouts.length}
+          </span>
+        </div>
+
+        {cancelledWorkouts.length > 0 ? (
+          <div className='grid gap-4 xl:grid-cols-2'>
+            {cancelledWorkouts.map(renderWorkoutCard)}
+          </div>
+        ) : (
+          <div className={cardClass}>
+            <p className='text-sm text-zinc-400'>
+              You have no cancelled workouts.
             </p>
           </div>
         )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Dumbbell, Clock, Layers, Loader2, AlertCircle } from "lucide-react";
 
@@ -48,6 +48,7 @@ const cardClass = "rounded-2xl border border-white/10 bg-[#111111] p-5 sm:p-6";
 
 export default function WorkoutTrackerPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const workoutId = params.id;
 
   const [workout, setWorkout] = useState<Workout | null>(null);
@@ -56,7 +57,12 @@ export default function WorkoutTrackerPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [savingSetId, setSavingSetId] = useState<string | null>(null);
+  const [finishingWorkout, setFinishingWorkout] = useState(false);
+  const [startingWorkout, setStartingWorkout] = useState(false);
+  const [cancellingWorkout, setCancellingWorkout] = useState(false);
+  const [deletingWorkout, setDeletingWorkout] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [restSecondsRemaining, setRestSecondsRemaining] = useState(0);
   const [restTotalSeconds, setRestTotalSeconds] = useState(0);
@@ -299,11 +305,17 @@ export default function WorkoutTrackerPage() {
     }));
   }
   async function handleCompleteSet(item: WorkoutExercise, set: WorkoutSet) {
-    if (savingSetId || set.is_completed || workout?.status !== "in_progress") {
+    if (
+      savingSetId ||
+      cancellingWorkout ||
+      finishingWorkout ||
+      set.is_completed ||
+      workout?.status !== "in_progress"
+    ) {
       return;
     }
 
-    setError("");
+    setActionError("");
 
     const inputs = setInputs[set.id];
 
@@ -327,29 +339,29 @@ export default function WorkoutTrackerPage() {
     // Validate required performance values.
 
     if (trackingType === "reps_weight") {
-      if (weight === null) {
-        setError("Enter a valid weight.");
+      if (weight === null || weight <= 0) {
+        setActionError("Enter a weight greater than zero.");
         return;
       }
     }
 
     if (trackingType === "reps_weight" || trackingType === "reps") {
       if (reps === null || !Number.isInteger(reps) || reps <= 0) {
-        setError("Enter a valid number of repetitions.");
+        setActionError("Enter a valid number of repetitions.");
         return;
       }
     }
 
     if (trackingType === "duration" || trackingType === "distance") {
       if (duration === null || !Number.isInteger(duration) || duration <= 0) {
-        setError("Enter a valid duration in seconds.");
+        setActionError("Enter a valid duration in seconds.");
         return;
       }
     }
 
     if (trackingType === "distance") {
       if (distance === null || distance <= 0) {
-        setError("Enter a valid distance.");
+        setActionError("Enter a valid distance.");
         return;
       }
     }
@@ -440,7 +452,7 @@ export default function WorkoutTrackerPage() {
           ? String(err.message)
           : "Unable to save completed set.";
 
-      setError(message);
+      setActionError(message);
     } finally {
       setSavingSetId(null);
     }
@@ -467,6 +479,203 @@ export default function WorkoutTrackerPage() {
     setRestTotalSeconds(0);
     setIsRestTimerActive(false);
     setIsRestTimerPaused(false);
+  }
+  async function handleStartWorkout() {
+    if (!workout || workout.status !== "planned" || startingWorkout) {
+      return;
+    }
+
+    setActionError("");
+    setStartingWorkout(true);
+
+    try {
+      const startedAt = new Date().toISOString();
+
+      const { data, error: startError } = await supabase
+        .from("workouts")
+        .update({
+          status: "in_progress",
+          started_at: startedAt,
+          updated_at: startedAt,
+        })
+        .eq("id", workout.id)
+        .eq("status", "planned")
+        .select()
+        .single();
+
+      if (startError) throw startError;
+
+      if (!data) {
+        throw new Error("Unable to confirm workout start.");
+      }
+
+      setWorkout(data);
+      setElapsedSeconds(0);
+    } catch (err) {
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Unable to start workout.";
+
+      setActionError(message);
+    } finally {
+      setStartingWorkout(false);
+    }
+  }
+  async function handleDeleteWorkout() {
+    if (
+      !workout ||
+      !["planned", "completed", "cancelled"].includes(workout.status) ||
+      deletingWorkout ||
+      startingWorkout ||
+      cancellingWorkout ||
+      finishingWorkout ||
+      savingSetId
+    ) {
+      return;
+    }
+
+    setActionError("");
+    setDeletingWorkout(true);
+
+    try {
+      const { data, error: deleteError } = await supabase
+        .from("workouts")
+        .delete()
+        .eq("id", workout.id)
+        .in("status", ["planned", "completed", "cancelled"])
+        .select("id")
+        .single();
+
+      if (deleteError) throw deleteError;
+
+      if (!data) {
+        throw new Error("Unable to confirm workout deletion.");
+      }
+
+      router.replace("/workouts");
+    } catch (err) {
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Unable to delete workout.";
+
+      setActionError(message);
+      setDeletingWorkout(false);
+    }
+  }
+  async function handleCancelWorkout() {
+    if (
+      !workout ||
+      workout.status !== "in_progress" ||
+      cancellingWorkout ||
+      finishingWorkout ||
+      savingSetId
+    ) {
+      return;
+    }
+
+    setActionError("");
+    setCancellingWorkout(true);
+
+    try {
+      const cancelledAt = new Date().toISOString();
+
+      const { data, error: cancelError } = await supabase
+        .from("workouts")
+        .update({
+          status: "cancelled",
+          updated_at: cancelledAt,
+        })
+        .eq("id", workout.id)
+        .eq("status", "in_progress")
+        .select()
+        .single();
+
+      if (cancelError) throw cancelError;
+
+      if (!data) {
+        throw new Error("Unable to confirm workout cancellation.");
+      }
+
+      setWorkout(data);
+      skipRestTimer();
+    } catch (err) {
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Unable to cancel workout.";
+
+      setActionError(message);
+    } finally {
+      setCancellingWorkout(false);
+    }
+  }
+  async function handleFinishWorkout() {
+    if (
+      !workout ||
+      workout.status !== "in_progress" ||
+      finishingWorkout ||
+      cancellingWorkout ||
+      savingSetId
+    ) {
+      return;
+    }
+
+    setActionError("");
+
+    if (completedSets === 0) {
+      setActionError("Complete at least one set before finishing.");
+      return;
+    }
+
+    setFinishingWorkout(true);
+
+    try {
+      const completedAt = new Date();
+
+      const durationSeconds = workout.started_at
+        ? Math.max(
+            0,
+            Math.floor(
+              (completedAt.getTime() - new Date(workout.started_at).getTime()) /
+                1000,
+            ),
+          )
+        : elapsedSeconds;
+
+      const { data, error: finishError } = await supabase
+        .from("workouts")
+        .update({
+          status: "completed",
+          completed_at: completedAt.toISOString(),
+          duration_seconds: durationSeconds,
+          updated_at: completedAt.toISOString(),
+        })
+        .eq("id", workout.id)
+        .eq("status", "in_progress")
+        .select()
+        .single();
+
+      if (finishError) throw finishError;
+
+      if (!data) {
+        throw new Error("Unable to confirm workout completion.");
+      }
+
+      setWorkout(data);
+      setElapsedSeconds(durationSeconds);
+      skipRestTimer();
+    } catch (err) {
+      const message =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Unable to finish workout.";
+
+      setActionError(message);
+    } finally {
+      setFinishingWorkout(false);
+    }
   }
   function formatLabel(value: string) {
     return value
@@ -513,6 +722,62 @@ export default function WorkoutTrackerPage() {
           {formatLabel(workout.status)}
         </p>
       </div>
+
+      {/* START SAVED WORKOUT */}
+      {workout.status === "planned" && (
+        <div className='mb-6 rounded-2xl border border-[#A4FF00]/25 bg-[#111111] p-5'>
+          <h2 className='text-lg font-semibold'>Ready to Train?</h2>
+
+          <p className='mt-2 text-sm text-zinc-400'>
+            Your workout is saved and ready to begin. Start your session to
+            track your performance.
+          </p>
+
+          <button
+            type='button'
+            disabled={startingWorkout}
+            onClick={handleStartWorkout}
+            className='mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#A4FF00] px-4 py-4 font-bold text-black transition hover:bg-[#b6ff40] disabled:opacity-50'
+          >
+            {startingWorkout ? (
+              <>
+                <Loader2
+                  size={20}
+                  className='animate-spin'
+                />
+                Starting Workout...
+              </>
+            ) : (
+              <>
+                <Dumbbell size={20} />
+                Start Workout
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* CANCELLED WORKOUT NOTICE */}
+      {workout.status === "cancelled" && (
+        <div className='mb-6 rounded-2xl border border-red-500/25 bg-red-500/5 p-5'>
+          <div className='flex items-center gap-3'>
+            <AlertCircle
+              size={24}
+              className='text-red-400'
+            />
+
+            <h2 className='text-lg font-semibold text-red-400'>
+              Workout Cancelled
+            </h2>
+          </div>
+
+          <p className='mt-3 text-sm leading-relaxed text-zinc-400'>
+            This workout has been cancelled. Any previously recorded sets have
+            been preserved, but this session will not count toward your
+            completed workout statistics.
+          </p>
+        </div>
+      )}
 
       {/* ELAPSED WORKOUT TIMER */}
       <div className='mb-6 rounded-2xl border border-white/10 bg-[#111111] p-5'>
@@ -677,6 +942,8 @@ export default function WorkoutTrackerPage() {
                 const disabled =
                   set.is_completed ||
                   savingSetId !== null ||
+                  cancellingWorkout ||
+                  finishingWorkout ||
                   workout.status !== "in_progress";
 
                 const inputClass =
@@ -837,6 +1104,115 @@ export default function WorkoutTrackerPage() {
       <p className='mt-6 text-center text-xs text-zinc-500'>
         Measurement system: {formatLabel(measurementSystem)}
       </p>
+
+      {/* FINISH WORKOUT BUTTON */}
+      {workout.status === "in_progress" && (
+        <div className='mt-8 rounded-2xl border border-white/10 bg-[#111111] p-5'>
+          <h2 className='text-lg font-semibold'>Finish Workout</h2>
+
+          <p className='mt-2 text-sm text-zinc-400'>
+            You have completed {completedSets} of {totalSets} sets. Your
+            recorded performance will be saved.
+          </p>
+
+          <button
+            type='button'
+            disabled={
+              finishingWorkout ||
+              cancellingWorkout ||
+              savingSetId !== null ||
+              completedSets === 0
+            }
+            onClick={() => {
+              if (
+                window.confirm("Are you sure you want to finish this workout?")
+              ) {
+                handleFinishWorkout();
+              }
+            }}
+            className='mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#A4FF00] px-4 py-4 font-bold text-black transition hover:bg-[#b6ff40] disabled:opacity-50'
+          >
+            {finishingWorkout ? (
+              <>
+                <Loader2
+                  size={20}
+                  className='animate-spin'
+                />
+                Finishing Workout...
+              </>
+            ) : (
+              "Finish Workout"
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* CANCEL WORKOUT BUTTON */}
+      {workout.status === "in_progress" && (
+        <div className='mt-4'>
+          <button
+            type='button'
+            disabled={
+              cancellingWorkout || finishingWorkout || savingSetId !== null
+            }
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Are you sure you want to cancel this workout? Your recorded sets will be preserved, but this workout will not count toward your completed workout statistics.",
+                )
+              ) {
+                handleCancelWorkout();
+              }
+            }}
+            className='flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50'
+          >
+            {cancellingWorkout ? (
+              <>
+                <Loader2
+                  size={18}
+                  className='animate-spin'
+                />
+                Cancelling Workout...
+              </>
+            ) : (
+              "Cancel Workout"
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* ACTION ERROR NOTIFICATION */}
+      {actionError && (
+        <div
+          role='alert'
+          className='fixed inset-x-4 top-4 z-[1000] sm:inset-x-auto sm:right-6 sm:w-96'
+        >
+          <div className='flex items-start gap-3 rounded-xl border border-red-500/30 bg-[#251515] p-4 shadow-xl'>
+            <AlertCircle
+              size={20}
+              className='mt-0.5 shrink-0 text-red-400'
+            />
+
+            <div className='flex-1'>
+              <p className='text-sm font-semibold text-red-400'>
+                Unable to complete set
+              </p>
+
+              <p className='mt-1 text-sm text-red-300'>{actionError}</p>
+            </div>
+
+            <button
+              type='button'
+              aria-label='Dismiss error'
+              onClick={() => setActionError("")}
+              className='text-xl leading-none text-red-400 hover:text-white'
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* FLOATING REST TIMER */}
       {isRestTimerActive && (
         <div className='fixed inset-x-4 bottom-24 z-999 sm:inset-x-auto sm:right-6 sm:w-80 lg:bottom-6'>
