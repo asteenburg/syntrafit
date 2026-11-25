@@ -41,7 +41,7 @@ const navigation = [
     name: "Profile",
     href: "/profile",
     icon: User,
-    enabled: false,
+    enabled: true,
   },
 ];
 
