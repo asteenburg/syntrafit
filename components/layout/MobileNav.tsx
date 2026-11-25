@@ -50,7 +50,7 @@ export default function MobileNav() {
   return (
     <nav
       aria-label='Mobile navigation'
-      className='fixed inset-x-0 bottom-0 z-50 px-3 pb-[calc(12px+env(safe-area-inset-bottom))] lg:hidden'
+      className='fixed inset-x-0 bottom-0 z-50 px-3 pb-[calc(12px+env(safe-area-inset-bottom))]'
     >
       <div className='mx-auto flex max-w-md items-center justify-around rounded-full border border-white/10 bg-[#171717]/95 px-2 py-2 shadow-2xl backdrop-blur-xl'>
         {navigation.map((item) => {
