@@ -193,7 +193,6 @@ export default async function DashboardPage() {
 
             <button
               type='button'
-              disabled
               className='mt-6 inline-flex items-center gap-3 rounded-xl bg-black px-5 py-3 font-semibold text-[#A4FF00] disabled:opacity-70'
             >
               Generate Workout
