@@ -7,8 +7,9 @@ import {
   LayoutDashboard,
   Dumbbell,
   Zap,
-  ChartNoAxesCombined,
+  BookOpen,
   User,
+  Book,
 } from "lucide-react";
 
 const navigation = [
@@ -22,7 +23,7 @@ const navigation = [
     name: "Workouts",
     href: "/workouts",
     icon: Dumbbell,
-    enabled: true,
+    enabled: false,
   },
   {
     name: "Generate",
@@ -31,10 +32,10 @@ const navigation = [
     enabled: false,
   },
   {
-    name: "Progress",
-    href: "/progress",
-    icon: ChartNoAxesCombined,
-    enabled: false,
+    name: "Exercises",
+    href: "/exercises",
+    icon: BookOpen,
+    enabled: true,
   },
   {
     name: "Profile",
