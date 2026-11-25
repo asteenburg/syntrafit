@@ -22,7 +22,7 @@ const navigation = [
     name: "Workouts",
     href: "/workouts",
     icon: Dumbbell,
-    enabled: false,
+    enabled: true,
   },
   {
     name: "Generate",

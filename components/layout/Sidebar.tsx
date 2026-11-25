@@ -45,7 +45,7 @@ const navigation = [
         name: "Exercises",
         href: "/exercises",
         icon: BookOpen,
-        enabled: false,
+        enabled: true,
       },
     ],
   },
