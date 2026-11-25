@@ -29,7 +29,7 @@ const navigation = [
     name: "Generate",
     href: "/generator",
     icon: Zap,
-    enabled: false,
+    enabled: true,
   },
   {
     name: "Exercises",

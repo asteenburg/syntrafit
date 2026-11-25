@@ -57,6 +57,11 @@ export default function WorkoutTrackerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingSetId, setSavingSetId] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [restSecondsRemaining, setRestSecondsRemaining] = useState(0);
+  const [restTotalSeconds, setRestTotalSeconds] = useState(0);
+  const [isRestTimerActive, setIsRestTimerActive] = useState(false);
+  const [isRestTimerPaused, setIsRestTimerPaused] = useState(false);
 
   const [setInputs, setSetInputs] = useState<
     Record<
@@ -225,7 +230,48 @@ export default function WorkoutTrackerPage() {
 
     loadWorkout();
   }, [workoutId]);
+  useEffect(() => {
+    if (!workout) return;
 
+    if (workout.status === "completed") {
+      setElapsedSeconds(workout.duration_seconds ?? 0);
+      return;
+    }
+
+    if (workout.status !== "in_progress" || !workout.started_at) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = new Date(workout.started_at).getTime();
+
+    function updateTimer() {
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+
+      setElapsedSeconds(elapsed);
+    }
+
+    updateTimer();
+
+    const interval = window.setInterval(updateTimer, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [workout]);
+  useEffect(() => {
+    if (!isRestTimerActive || isRestTimerPaused) return;
+
+    if (restSecondsRemaining <= 0) {
+      setIsRestTimerActive(false);
+      setIsRestTimerPaused(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setRestSecondsRemaining((previous) => Math.max(0, previous - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timeout);
+  }, [isRestTimerActive, isRestTimerPaused, restSecondsRemaining]);
   const totalSets = exercises.reduce(
     (total, item) => total + item.workout_sets.length,
     0,
@@ -364,7 +410,13 @@ export default function WorkoutTrackerPage() {
       if (!data) {
         throw new Error("Unable to confirm set completion.");
       }
+      // Start the rest countdown after successful set completion
+      const restDuration = item.rest_seconds ?? 60;
 
+      setRestTotalSeconds(restDuration);
+      setRestSecondsRemaining(restDuration);
+      setIsRestTimerPaused(false);
+      setIsRestTimerActive(restDuration > 0);
       setExercises((previous) =>
         previous.map((exercise) =>
           exercise.id === item.id
@@ -392,6 +444,29 @@ export default function WorkoutTrackerPage() {
     } finally {
       setSavingSetId(null);
     }
+  }
+  function toggleRestTimerPause() {
+    setIsRestTimerPaused((previous) => !previous);
+  }
+
+  function adjustRestTimer(seconds: number) {
+    const nextRemaining = Math.max(0, restSecondsRemaining + seconds);
+
+    setRestSecondsRemaining(nextRemaining);
+
+    setRestTotalSeconds((previous) => Math.max(previous, nextRemaining));
+
+    if (nextRemaining === 0) {
+      setIsRestTimerActive(false);
+      setIsRestTimerPaused(false);
+    }
+  }
+
+  function skipRestTimer() {
+    setRestSecondsRemaining(0);
+    setRestTotalSeconds(0);
+    setIsRestTimerActive(false);
+    setIsRestTimerPaused(false);
   }
   function formatLabel(value: string) {
     return value
@@ -437,6 +512,33 @@ export default function WorkoutTrackerPage() {
         <p className='mt-2 text-sm text-zinc-400'>
           {formatLabel(workout.status)}
         </p>
+      </div>
+
+      {/* ELAPSED WORKOUT TIMER */}
+      <div className='mb-6 rounded-2xl border border-white/10 bg-[#111111] p-5'>
+        <div className='flex items-center gap-4'>
+          <div className='flex h-12 w-12 items-center justify-center rounded-xl bg-[#A4FF00]/10'>
+            <Clock
+              size={24}
+              className='text-[#A4FF00]'
+            />
+          </div>
+
+          <div>
+            <p className='text-xs font-medium uppercase tracking-wider text-zinc-400'>
+              Elapsed Workout Time
+            </p>
+
+            <p className='mt-1 text-3xl font-bold tabular-nums text-[#A4FF00]'>
+              {String(Math.floor(elapsedSeconds / 3600)).padStart(2, "0")}:
+              {String(Math.floor((elapsedSeconds % 3600) / 60)).padStart(
+                2,
+                "0",
+              )}
+              :{String(elapsedSeconds % 60).padStart(2, "0")}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* WORKOUT SUMMARY */}
@@ -735,6 +837,89 @@ export default function WorkoutTrackerPage() {
       <p className='mt-6 text-center text-xs text-zinc-500'>
         Measurement system: {formatLabel(measurementSystem)}
       </p>
+      {/* FLOATING REST TIMER */}
+      {isRestTimerActive && (
+        <div className='fixed inset-x-4 bottom-24 z-999 sm:inset-x-auto sm:right-6 sm:w-80 lg:bottom-6'>
+          <div className='rounded-2xl border border-[#A4FF00]/30 bg-[#111111] p-5 shadow-2xl'>
+            {/* HEADER */}
+            <div className='flex items-center justify-between'>
+              <div className='flex items-center gap-2'>
+                <Clock
+                  size={20}
+                  className='text-[#A4FF00]'
+                />
+                <h3 className='font-semibold text-white'>Rest Timer</h3>
+              </div>
+
+              <span className='text-xs text-zinc-400'>
+                {isRestTimerPaused ? "Paused" : "Recover"}
+              </span>
+            </div>
+
+            {/* COUNTDOWN */}
+            <div className='my-5 text-center'>
+              <p className='text-5xl font-bold tabular-nums text-[#A4FF00]'>
+                {String(Math.floor(restSecondsRemaining / 60)).padStart(2, "0")}
+                :{String(restSecondsRemaining % 60).padStart(2, "0")}
+              </p>
+
+              <p className='mt-2 text-xs uppercase tracking-widest text-zinc-500'>
+                Rest Remaining
+              </p>
+            </div>
+
+            {/* PROGRESS BAR */}
+            <div className='mb-5 h-2 overflow-hidden rounded-full bg-white/10'>
+              <div
+                className='h-full rounded-full bg-[#A4FF00] transition-all duration-500'
+                style={{
+                  width: `${
+                    restTotalSeconds > 0
+                      ? (restSecondsRemaining / restTotalSeconds) * 100
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+
+            {/* TIMER CONTROLS */}
+            <div className='grid grid-cols-3 gap-2'>
+              <button
+                type='button'
+                onClick={() => adjustRestTimer(-15)}
+                className='rounded-xl bg-white/10 py-3 text-sm font-semibold text-white hover:bg-white/20'
+              >
+                -15 sec
+              </button>
+
+              <button
+                type='button'
+                onClick={toggleRestTimerPause}
+                className='rounded-xl bg-white/10 py-3 text-sm font-semibold text-white hover:bg-white/20'
+              >
+                {isRestTimerPaused ? "Resume" : "Pause"}
+              </button>
+
+              <button
+                type='button'
+                onClick={() => adjustRestTimer(15)}
+                className='rounded-xl bg-white/10 py-3 text-sm font-semibold text-white hover:bg-white/20'
+              >
+                +15 sec
+              </button>
+            </div>
+
+            {/* SKIP REST */}
+            <button
+              type='button'
+              onClick={skipRestTimer}
+              className='mt-3 w-full rounded-xl bg-[#A4FF00] py-3 text-sm font-bold text-black hover:bg-[#b6ff40]'
+            >
+              Skip Rest
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
