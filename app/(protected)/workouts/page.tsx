@@ -14,6 +14,7 @@ import {
   AlertCircle,
   ArrowRight,
   Zap,
+  Trophy,
 } from "lucide-react";
 
 const supabase = createClient();
@@ -43,6 +44,10 @@ export default function WorkoutsPage() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [workoutPRCounts, setWorkoutPRCounts] = useState<
+    Record<string, number>
+  >({});
 
   useEffect(() => {
     async function loadWorkouts() {
@@ -89,6 +94,25 @@ export default function WorkoutsPage() {
         if (workoutError) throw workoutError;
 
         setWorkouts((data ?? []) as Workout[]);
+        // Retrieve historical personal record achievements.
+        const { data: historicalRecords, error: recordsError } =
+          await supabase.rpc("get_historical_personal_records");
+
+        if (recordsError) {
+          console.error("Unable to load historical PRs:", recordsError);
+          setWorkoutPRCounts({});
+        } else {
+          const prCounts: Record<string, number> = {};
+
+          for (const record of historicalRecords ?? []) {
+            prCounts[record.workout_id] =
+              (prCounts[record.workout_id] ?? 0) + 1;
+          }
+
+          setWorkoutPRCounts(prCounts);
+
+          console.log("PR counts by workout:", prCounts);
+        }
       } catch (err) {
         const message =
           err && typeof err === "object" && "message" in err
@@ -122,6 +146,26 @@ export default function WorkoutsPage() {
         new Date(b.completed_at ?? b.created_at).getTime() -
         new Date(a.completed_at ?? a.created_at).getTime(),
     );
+  const groupedCompletedWorkouts = completedWorkouts.reduce<
+    Record<string, Workout[]>
+  >((groups, workout) => {
+    const date = workout.completed_at
+      ? new Date(workout.completed_at).toLocaleDateString("en-CA", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : "Completion date unavailable";
+
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+
+    groups[date].push(workout);
+
+    return groups;
+  }, {});
 
   function getWorkoutStats(workout: Workout) {
     const exerciseCount = workout.workout_exercises.length;
@@ -151,11 +195,44 @@ export default function WorkoutsPage() {
   function formatDate(value: string | null) {
     if (!value) return "—";
 
-    return new Date(value).toLocaleDateString("en-CA", {
+    const date = new Date(value);
+
+    const formattedDate = date.toLocaleDateString("en-CA", {
       year: "numeric",
       month: "long",
       day: "numeric",
     });
+
+    const formattedTime = date.toLocaleTimeString("en-CA", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+    return `${formattedDate} at ${formattedTime.toUpperCase()}`;
+  }
+
+  function getWorkoutTimestamp(workout: Workout) {
+    switch (workout.status) {
+      case "completed":
+        return workout.completed_at
+          ? `Completed ${formatDate(workout.completed_at)}`
+          : "Completion time unavailable";
+
+      case "in_progress":
+        return workout.started_at
+          ? `Started ${formatDate(workout.started_at)}`
+          : "Start time unavailable";
+
+      case "planned":
+        return `Saved ${formatDate(workout.created_at)}`;
+
+      case "cancelled":
+        return `Created ${formatDate(workout.created_at)}`;
+
+      default:
+        return formatDate(workout.created_at);
+    }
   }
 
   function formatDuration(seconds: number | null) {
@@ -187,6 +264,7 @@ export default function WorkoutsPage() {
 
     const isActive = workout.status === "in_progress";
     const isCompleted = workout.status === "completed";
+    const prCount = workoutPRCounts[workout.id] ?? 0;
 
     return (
       <article
@@ -209,12 +287,10 @@ export default function WorkoutsPage() {
 
               <p className='mt-1 text-xs text-zinc-500'>
                 {formatLabel(workout.source)}
-                {" · "}
-                {formatDate(
-                  workout.completed_at ??
-                    workout.started_at ??
-                    workout.created_at,
-                )}
+              </p>
+
+              <p className='mt-1 text-xs text-zinc-400'>
+                {getWorkoutTimestamp(workout)}
               </p>
             </div>
           </div>
@@ -229,6 +305,17 @@ export default function WorkoutsPage() {
             {formatLabel(workout.status)}
           </span>
         </div>
+
+        {/* PERSONAL RECORD ACHIEVEMENTS */}
+
+        {isCompleted && prCount > 0 && (
+          <div className='mt-4'>
+            <span className='inline-flex items-center gap-1.5 rounded-full border border-[#FACC15]/25 bg-[#FACC15]/10 px-3 py-1.5 text-xs font-semibold text-[#FACC15]'>
+              <Trophy size={14} />
+              {prCount === 1 ? "New PR" : `${prCount} New PRs`}
+            </span>
+          </div>
+        )}
 
         {/* WORKOUT STATISTICS */}
 
@@ -458,8 +545,29 @@ export default function WorkoutsPage() {
         </div>
 
         {completedWorkouts.length > 0 ? (
-          <div className='grid gap-4 xl:grid-cols-2'>
-            {completedWorkouts.map(renderWorkoutCard)}
+          <div className='space-y-8'>
+            {Object.entries(groupedCompletedWorkouts).map(
+              ([date, dailyWorkouts]) => (
+                <div key={date}>
+                  <div className='mb-4 flex items-center gap-3'>
+                    <h3 className='text-sm font-semibold text-zinc-400'>
+                      {date}
+                    </h3>
+
+                    <div className='h-px flex-1 bg-white/10' />
+
+                    <span className='text-xs text-zinc-500'>
+                      {dailyWorkouts.length}{" "}
+                      {dailyWorkouts.length === 1 ? "workout" : "workouts"}
+                    </span>
+                  </div>
+
+                  <div className='grid gap-4 xl:grid-cols-2'>
+                    {dailyWorkouts.map(renderWorkoutCard)}
+                  </div>
+                </div>
+              ),
+            )}
           </div>
         ) : (
           <div className={cardClass}>

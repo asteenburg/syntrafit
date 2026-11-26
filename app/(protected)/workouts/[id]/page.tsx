@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Dumbbell, Clock, Layers, Loader2, AlertCircle } from "lucide-react";
+import {
+  Dumbbell,
+  Clock,
+  Layers,
+  Loader2,
+  AlertCircle,
+  Trophy,
+} from "lucide-react";
 
 const supabase = createClient();
 
@@ -44,6 +51,30 @@ interface WorkoutExercise {
   workout_sets: WorkoutSet[];
 }
 
+interface PersonalRecord {
+  user_id: string;
+  exercise_id: string;
+  workout_id: string;
+  workout_exercise_id: string;
+  workout_set_id: string;
+
+  record_type:
+    | "max_weight"
+    | "max_reps"
+    | "max_volume"
+    | "estimated_1rm"
+    | "max_duration"
+    | "max_distance"
+    | "best_pace";
+
+  record_value: number;
+  unit: string;
+  achieved_at: string;
+  previous_best: number | null;
+  is_first_record: boolean;
+  improvement_percentage: number | null;
+}
+
 const cardClass = "rounded-2xl border border-white/10 bg-[#111111] p-5 sm:p-6";
 
 export default function WorkoutTrackerPage() {
@@ -53,6 +84,7 @@ export default function WorkoutTrackerPage() {
 
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [exercises, setExercises] = useState<WorkoutExercise[]>([]);
+  const [personalRecords, setPersonalRecords] = useState<PersonalRecord[]>([]);
   const [measurementSystem, setMeasurementSystem] = useState("imperial");
 
   const [loading, setLoading] = useState(true);
@@ -162,6 +194,24 @@ export default function WorkoutTrackerPage() {
           []) as unknown as WorkoutExercise[];
 
         setWorkout(workoutResult.data);
+        // Retrieve historical personal records for this workout.
+        const recordsFunction =
+          workoutResult.data.status === "in_progress"
+            ? "get_provisional_personal_records"
+            : "get_historical_personal_records";
+
+        const { data: historicalRecords, error: recordsError } =
+          await supabase.rpc(recordsFunction, {
+            p_workout_id: workoutId,
+          });
+
+        if (recordsError) {
+          console.error("Unable to load personal records:", recordsError);
+          setPersonalRecords([]);
+        } else {
+          setPersonalRecords(historicalRecords ?? []);
+          console.log("Historical personal records:", historicalRecords);
+        }
 
         setExercises(
           loadedExercises.map((item) => ({
@@ -446,6 +496,20 @@ export default function WorkoutTrackerPage() {
             : exercise,
         ),
       );
+      // Refresh provisional personal records after completing a set.
+      const { data: provisionalRecords, error: recordsError } =
+        await supabase.rpc("get_provisional_personal_records", {
+          p_workout_id: workoutId,
+        });
+
+      if (recordsError) {
+        console.error(
+          "Unable to refresh provisional personal records:",
+          recordsError,
+        );
+      } else {
+        setPersonalRecords(provisionalRecords ?? []);
+      }
     } catch (err) {
       const message =
         err && typeof err === "object" && "message" in err
@@ -481,7 +545,12 @@ export default function WorkoutTrackerPage() {
     setIsRestTimerPaused(false);
   }
   async function handleStartWorkout() {
-    if (!workout || workout.status !== "planned" || startingWorkout) {
+    if (
+      !workout ||
+      workout.status !== "planned" ||
+      startingWorkout ||
+      deletingWorkout
+    ) {
       return;
     }
 
@@ -600,6 +669,7 @@ export default function WorkoutTrackerPage() {
 
       setWorkout(data);
       skipRestTimer();
+      setPersonalRecords([]);
     } catch (err) {
       const message =
         err && typeof err === "object" && "message" in err
@@ -666,6 +736,17 @@ export default function WorkoutTrackerPage() {
       setWorkout(data);
       setElapsedSeconds(durationSeconds);
       skipRestTimer();
+      // Retrieve newly confirmed personal records.
+      const { data: confirmedRecords, error: recordsError } =
+        await supabase.rpc("get_historical_personal_records", {
+          p_workout_id: workoutId,
+        });
+
+      if (recordsError) {
+        console.error("Unable to refresh personal records:", recordsError);
+      } else {
+        setPersonalRecords(confirmedRecords ?? []);
+      }
     } catch (err) {
       const message =
         err && typeof err === "object" && "message" in err
@@ -682,7 +763,57 @@ export default function WorkoutTrackerPage() {
       .replace(/_/g, " ")
       .replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
+  function formatRecordValue(value: number, unit: string) {
+    const isImperial = measurementSystem === "imperial";
 
+    function round(number: number) {
+      return Number(number.toFixed(2));
+    }
+
+    switch (unit) {
+      case "kg":
+        return isImperial
+          ? `${round(value * 2.20462262)} lbs`
+          : `${round(value)} kg`;
+
+      case "reps":
+        return `${value} reps`;
+
+      case "seconds": {
+        const totalSeconds = Math.round(value);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        if (hours > 0) {
+          return `${hours}h ${minutes}m ${seconds}s`;
+        }
+
+        if (minutes > 0) {
+          return `${minutes}m ${seconds}s`;
+        }
+
+        return `${seconds}s`;
+      }
+
+      case "meters":
+        return isImperial
+          ? `${round(value / 1609.344)} mi`
+          : `${round(value / 1000)} km`;
+
+      case "seconds/km": {
+        const pace = Math.round(isImperial ? value * 1.609344 : value);
+
+        const minutes = Math.floor(pace / 60);
+        const seconds = String(pace % 60).padStart(2, "0");
+
+        return `${minutes}:${seconds} /${isImperial ? "mi" : "km"}`;
+      }
+
+      default:
+        return `${round(value)} ${unit}`;
+    }
+  }
   if (loading) {
     return (
       <div className='flex min-h-[70vh] items-center justify-center'>
@@ -735,7 +866,7 @@ export default function WorkoutTrackerPage() {
 
           <button
             type='button'
-            disabled={startingWorkout}
+            disabled={startingWorkout || deletingWorkout}
             onClick={handleStartWorkout}
             className='mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#A4FF00] px-4 py-4 font-bold text-black transition hover:bg-[#b6ff40] disabled:opacity-50'
           >
@@ -931,6 +1062,11 @@ export default function WorkoutTrackerPage() {
             <div className='mt-5 space-y-3'>
               {item.workout_sets.map((set) => {
                 const trackingType = item.exercises.tracking_type;
+                const setPersonalRecords = personalRecords.filter(
+                  (record) => record.workout_set_id === set.id,
+                );
+
+                const hasPersonalRecord = setPersonalRecords.length > 0;
 
                 const inputs = setInputs[set.id] ?? {
                   weight: "",
@@ -961,9 +1097,20 @@ export default function WorkoutTrackerPage() {
                     {/* SET HEADER */}
 
                     <div className='mb-4 flex items-center justify-between'>
-                      <span className='text-sm font-semibold'>
-                        Set {set.set_number}
-                      </span>
+                      <div className='flex items-center gap-2'>
+                        <span className='text-sm font-semibold'>
+                          Set {set.set_number}
+                        </span>
+
+                        {hasPersonalRecord && (
+                          <span className='inline-flex items-center gap-1.5 rounded-full border border-[#FACC15]/25 bg-[#FACC15]/10 px-2.5 py-1 text-xs font-semibold text-[#FACC15]'>
+                            <Trophy size={13} />
+                            {workout.status === "in_progress"
+                              ? "New PR"
+                              : "PR Achieved"}
+                          </span>
+                        )}
+                      </div>
 
                       <span
                         className={`text-xs ${
@@ -973,6 +1120,86 @@ export default function WorkoutTrackerPage() {
                         {set.is_completed ? "Completed" : "Pending"}
                       </span>
                     </div>
+
+                    {hasPersonalRecord && (
+                      <div className='mb-4 space-y-3'>
+                        {setPersonalRecords.map((record) => (
+                          <div
+                            key={record.record_type}
+                            className='rounded-xl border border-[#FACC15]/20 bg-[#FACC15]/5 p-3'
+                          >
+                            <div className='flex items-center justify-between gap-3'>
+                              <div className='flex items-center gap-2'>
+                                <Trophy
+                                  size={14}
+                                  className='shrink-0 text-[#FACC15]'
+                                />
+
+                                <span className='text-xs font-medium text-[#FACC15]'>
+                                  {
+                                    {
+                                      max_weight: "Maximum Weight",
+                                      max_reps: "Maximum Repetitions",
+                                      max_volume: "Maximum Set Volume",
+                                      estimated_1rm: "Estimated 1RM",
+                                      max_duration: "Longest Duration",
+                                      max_distance: "Longest Distance",
+                                      best_pace: "Best Pace",
+                                    }[record.record_type]
+                                  }
+                                </span>
+                              </div>
+
+                              {record.is_first_record ? (
+                                <span className='text-xs font-semibold text-[#FACC15]'>
+                                  First PR
+                                </span>
+                              ) : record.improvement_percentage !== null ? (
+                                <span className='text-xs font-semibold text-[#A4FF00]'>
+                                  +
+                                  {Number(
+                                    record.improvement_percentage.toFixed(2),
+                                  )}
+                                  %
+                                </span>
+                              ) : null}
+                            </div>
+
+                            <div className='mt-3 flex items-center justify-between gap-3'>
+                              <div>
+                                <p className='text-xs text-zinc-500'>
+                                  Previous best
+                                </p>
+
+                                <p className='mt-1 text-sm font-semibold text-zinc-400'>
+                                  {record.previous_best !== null
+                                    ? formatRecordValue(
+                                        record.previous_best,
+                                        record.unit,
+                                      )
+                                    : "—"}
+                                </p>
+                              </div>
+
+                              <span className='text-zinc-600'>→</span>
+
+                              <div className='text-right'>
+                                <p className='text-xs text-zinc-500'>
+                                  New record
+                                </p>
+
+                                <p className='mt-1 text-sm font-bold text-[#FACC15]'>
+                                  {formatRecordValue(
+                                    record.record_value,
+                                    record.unit,
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     {/* PERFORMANCE INPUTS */}
 
@@ -1176,6 +1403,38 @@ export default function WorkoutTrackerPage() {
               </>
             ) : (
               "Cancel Workout"
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* DELETE WORKOUT BUTTON */}
+      {["planned", "completed", "cancelled"].includes(workout.status) && (
+        <div className='mt-6'>
+          <button
+            type='button'
+            disabled={deletingWorkout || startingWorkout}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Are you sure you want to permanently delete this workout? All associated exercises and recorded sets will be deleted. This action cannot be undone.",
+                )
+              ) {
+                handleDeleteWorkout();
+              }
+            }}
+            className='flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50'
+          >
+            {deletingWorkout ? (
+              <>
+                <Loader2
+                  size={18}
+                  className='animate-spin'
+                />
+                Deleting Workout...
+              </>
+            ) : (
+              "Delete Workout"
             )}
           </button>
         </div>
