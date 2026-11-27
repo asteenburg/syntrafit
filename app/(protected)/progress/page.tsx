@@ -25,7 +25,7 @@ import {
 const supabase = createClient();
 
 // TYPES
-
+type DateRange = "7d" | "30d" | "90d" | "1y" | "all";
 interface ProgressSummary {
   completedWorkouts: number;
   personalRecords: number;
@@ -160,6 +160,7 @@ export default function ProgressPage() {
   const [exerciseHistory, setExerciseHistory] = useState<ExerciseHistory[]>([]);
 
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>("");
+  const [dateRange, setDateRange] = useState<DateRange>("all");
 
   // PERFORMANCE HISTORY STATE
 
@@ -368,6 +369,96 @@ export default function ProgressPage() {
     (exercise) => exercise.id === selectedExerciseId,
   );
 
+  // EXERCISE NAME LOOKUP
+
+  function getExerciseName(exerciseId: string): string {
+    return (
+      exerciseHistory.find((exercise) => exercise.id === exerciseId)?.name ??
+      "Unknown Exercise"
+    );
+  }
+
+  // PERSONAL RECORD VALUE FORMATTER
+
+  function formatRecordValue(value: number, unit: string): string {
+    switch (unit) {
+      case "kg": {
+        const weight =
+          measurementSystem === "imperial" ? value * 2.20462262 : value;
+
+        return `${Number(weight.toFixed(2))} ${
+          measurementSystem === "imperial" ? "lbs" : "kg"
+        }`;
+      }
+
+      case "reps":
+        return `${value} reps`;
+
+      case "seconds": {
+        const totalSeconds = Math.round(value);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        if (hours > 0) {
+          return `${hours}h ${minutes}m ${seconds}s`;
+        }
+
+        if (minutes > 0) {
+          return `${minutes}m ${seconds}s`;
+        }
+
+        return `${seconds}s`;
+      }
+
+      case "meters": {
+        const distance =
+          value / (measurementSystem === "imperial" ? 1609.344 : 1000);
+
+        return `${Number(distance.toFixed(3))} ${
+          measurementSystem === "imperial" ? "mi" : "km"
+        }`;
+      }
+
+      case "seconds/km": {
+        const totalSeconds = Math.round(
+          value * (measurementSystem === "imperial" ? 1.609344 : 1),
+        );
+
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+
+        return `${minutes}:${String(seconds).padStart(2, "0")} ${
+          measurementSystem === "imperial" ? "min/mi" : "min/km"
+        }`;
+      }
+
+      default:
+        return `${value} ${unit}`;
+    }
+  }
+
+  // PERSONAL RECORD DISPLAY LABELS
+
+  const recordLabels: Record<PersonalRecord["record_type"], string> = {
+    max_weight: "Heaviest Weight",
+    max_reps: "Most Repetitions",
+    max_volume: "Highest Set Volume",
+    estimated_1rm: "Estimated 1RM",
+    max_duration: "Longest Duration",
+    max_distance: "Longest Distance",
+    best_pace: "Fastest Pace",
+  };
+
+  // RECENT PERSONAL RECORD ACHIEVEMENTS
+
+  const recentAchievements = [...personalRecords]
+    .sort(
+      (a, b) =>
+        new Date(b.achieved_at).getTime() - new Date(a.achieved_at).getTime(),
+    )
+    .slice(0, 5);
+
   // PERSONAL RECORD MATCHING
 
   function isPersonalRecord(
@@ -380,12 +471,44 @@ export default function ProgressPage() {
     );
   }
 
+  // DATE RANGE FILTERING
+
+  function isWithinDateRange(date: string): boolean {
+    if (dateRange === "all") {
+      return true;
+    }
+
+    const cutoff = new Date();
+
+    switch (dateRange) {
+      case "7d":
+        cutoff.setDate(cutoff.getDate() - 7);
+        break;
+
+      case "30d":
+        cutoff.setDate(cutoff.getDate() - 30);
+        break;
+
+      case "90d":
+        cutoff.setDate(cutoff.getDate() - 90);
+        break;
+
+      case "1y":
+        cutoff.setFullYear(cutoff.getFullYear() - 1);
+        break;
+    }
+
+    return new Date(date).getTime() >= cutoff.getTime();
+  }
+
   // CHRONOLOGICAL SET HISTORY
 
-  const chronologicalHistory = performanceHistory.map((set, index) => ({
-    ...set,
-    performanceNumber: index + 1,
-  }));
+  const chronologicalHistory = performanceHistory
+    .map((set, index) => ({
+      ...set,
+      performanceNumber: index + 1,
+    }))
+    .filter((set) => isWithinDateRange(set.set_completed_at));
 
   // DURATION CHART DATA
 
@@ -706,6 +829,40 @@ export default function ProgressPage() {
             ))}
           </select>
         </div>
+
+        {/* DATE RANGE SELECTOR */}
+
+        {selectedExercise && (
+          <div className='mt-5'>
+            <p className='mb-2 text-sm font-medium text-zinc-400'>Date Range</p>
+
+            <div className='grid grid-cols-5 gap-2'>
+              {(
+                [
+                  { value: "7d", label: "7D" },
+                  { value: "30d", label: "30D" },
+                  { value: "90d", label: "90D" },
+                  { value: "1y", label: "1Y" },
+                  { value: "all", label: "All" },
+                ] as { value: DateRange; label: string }[]
+              ).map((range) => (
+                <button
+                  key={range.value}
+                  type='button'
+                  aria-pressed={dateRange === range.value}
+                  onClick={() => setDateRange(range.value)}
+                  className={`rounded-lg border px-2 py-2.5 text-sm font-semibold transition-colors ${
+                    dateRange === range.value
+                      ? "border-[#A4FF00] bg-[#A4FF00] text-black"
+                      : "border-white/10 bg-[#080808] text-zinc-400 hover:border-[#A4FF00]/50 hover:text-white"
+                  }`}
+                >
+                  {range.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* PERFORMANCE LOADING STATE */}
 
@@ -1059,7 +1216,14 @@ export default function ProgressPage() {
 
                         return `Set ${value} — ${formattedDate}`;
                       }}
-                      formatter={(value) => [`${value} reps`, "Repetitions"]}
+                      formatter={(value, _name, item) => {
+                        const isPR = item?.payload?.isPR === true;
+
+                        return [
+                          `${value} reps`,
+                          isPR ? "Repetitions — New PR 🏆" : "Repetitions",
+                        ];
+                      }}
                     />
 
                     <Line
@@ -1156,10 +1320,14 @@ export default function ProgressPage() {
 
                         return `Set ${value} — ${formattedDate}`;
                       }}
-                      formatter={(value) => [
-                        `${value} ${distanceUnit}`,
-                        "Distance",
-                      ]}
+                      formatter={(value, _name, item) => {
+                        const isPR = item?.payload?.isPR === true;
+
+                        return [
+                          `${value} ${distanceUnit}`,
+                          isPR ? "Distance — New PR 🏆" : "Distance",
+                        ];
+                      }}
                     />
 
                     <Line
@@ -1263,14 +1431,16 @@ export default function ProgressPage() {
 
                         return `Set ${value} — ${formattedDate}`;
                       }}
-                      formatter={(value) => {
+                      formatter={(value, _name, item) => {
                         const totalSeconds = Math.round(Number(value));
                         const minutes = Math.floor(totalSeconds / 60);
                         const seconds = totalSeconds % 60;
 
+                        const isPR = item?.payload?.isPR === true;
+
                         return [
                           `${minutes}:${String(seconds).padStart(2, "0")} ${paceUnit}`,
-                          "Average Pace",
+                          isPR ? "Average Pace — New PR 🏆" : "Average Pace",
                         ];
                       }}
                     />
@@ -1373,10 +1543,14 @@ export default function ProgressPage() {
 
                         return `Set ${value} — ${formattedDate}`;
                       }}
-                      formatter={(value) => [
-                        `${value} ${weightUnit}`,
-                        "Set Volume",
-                      ]}
+                      formatter={(value, _name, item) => {
+                        const isPR = item?.payload?.isPR === true;
+
+                        return [
+                          `${value} ${weightUnit}`,
+                          isPR ? "Set Volume — New PR 🏆" : "Set Volume",
+                        ];
+                      }}
                     />
 
                     <Line
@@ -1477,10 +1651,14 @@ export default function ProgressPage() {
 
                         return `Set ${value} — ${formattedDate}`;
                       }}
-                      formatter={(value) => [
-                        `${value} ${weightUnit}`,
-                        "Estimated 1RM",
-                      ]}
+                      formatter={(value, _name, item) => {
+                        const isPR = item?.payload?.isPR === true;
+
+                        return [
+                          `${value} ${weightUnit}`,
+                          isPR ? "Estimated 1RM — New PR 🏆" : "Estimated 1RM",
+                        ];
+                      }}
                     />
 
                     <Line
@@ -1536,6 +1714,101 @@ export default function ProgressPage() {
           </div>
         )}
       </div>
+      {/* RECENT PERSONAL RECORD ACHIEVEMENTS */}
+
+      <section className='mb-8 rounded-2xl border border-white/10 bg-[#111111] p-5 sm:p-6'>
+        <div className='flex items-center gap-3'>
+          <Trophy
+            size={24}
+            className='text-[#FACC15]'
+          />
+
+          <h2 className='text-xl font-bold'>Recent Achievements</h2>
+        </div>
+
+        <p className='mt-2 text-sm text-zinc-400'>
+          Celebrate your latest personal records.
+        </p>
+
+        {recentAchievements.length > 0 ? (
+          <div className='mt-5 space-y-3'>
+            {recentAchievements.map((record) => (
+              <div
+                key={`${record.workout_set_id}-${record.record_type}`}
+                className='rounded-xl border border-white/10 bg-[#080808] p-4'
+              >
+                <div className='flex items-center justify-between gap-3'>
+                  <div className='flex min-w-0 items-center gap-3'>
+                    <Trophy
+                      size={20}
+                      className='shrink-0 text-[#FACC15]'
+                    />
+
+                    <div>
+                      <h3 className='font-semibold text-white'>
+                        {getExerciseName(record.exercise_id)}
+                      </h3>
+
+                      <p className='mt-1 text-xs text-zinc-400'>
+                        {recordLabels[record.record_type]}
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className='shrink-0 text-lg font-bold text-[#FACC15]'>
+                    {formatRecordValue(record.record_value, record.unit)}
+                  </span>
+                </div>
+
+                <div className='mt-3 flex flex-wrap items-center justify-between gap-2'>
+                  {record.is_first_record ? (
+                    <span className='text-xs font-semibold text-[#FACC15]'>
+                      First Personal Record
+                    </span>
+                  ) : (
+                    <>
+                      {record.previous_best !== null && (
+                        <span className='text-xs text-zinc-400'>
+                          Previous best:{" "}
+                          {formatRecordValue(record.previous_best, record.unit)}
+                        </span>
+                      )}
+
+                      {record.improvement_percentage !== null && (
+                        <span className='text-xs font-semibold text-[#A4FF00]'>
+                          +{record.improvement_percentage}% improvement
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <p className='mt-3 text-xs text-zinc-500'>
+                  {new Date(record.achieved_at).toLocaleDateString("en-CA", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className='mt-5 rounded-xl border border-white/10 bg-[#080808] p-6 text-center'>
+            <Trophy
+              size={28}
+              className='mx-auto mb-3 text-zinc-500'
+            />
+
+            <p className='font-semibold text-white'>No personal records yet</p>
+
+            <p className='mt-2 text-sm text-zinc-400'>
+              Complete workouts to establish your personal records and track
+              your improvements.
+            </p>
+          </div>
+        )}
+      </section>
     </main>
   );
 }
