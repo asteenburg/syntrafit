@@ -56,7 +56,7 @@ const navigation = [
         name: "Progress",
         href: "/progress",
         icon: ChartNoAxesCombined,
-        enabled: false,
+        enabled: true,
       },
       {
         name: "Goals",
